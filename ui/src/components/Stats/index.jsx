@@ -8,10 +8,6 @@ const Stats = () => (
       <small>MEMBERS</small>
     </div>
     <div className={styles.statistic}>
-      <strong>12,525</strong>
-      <small>NEW REGISTRATIONS</small>
-    </div>
-    <div className={styles.statistic}>
       <strong>245</strong>
       <small>CHALLENGES</small>
     </div>
