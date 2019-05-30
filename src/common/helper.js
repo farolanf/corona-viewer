@@ -1,6 +1,8 @@
 /**
  * This file defines helper methods
  */
+const co = require('co')
+const _ = require('lodash')
 const config = require('config')
 const logger = require('./logger')
 
@@ -29,7 +31,41 @@ function getKafkaOptions () {
   return options
 }
 
+/**
+ * Wrap generator function to standard express function
+ * @param {Function} fn The generator function
+ * @return {Function} The wrapped function
+ */
+function wrapExpress (fn) {
+  return function wrap (req, res, next) {
+    co(fn(req, res, next)).catch(next)
+  }
+}
+
+/**
+ * Wrap all generators in object/array.
+ * @param {object|Array|Function} obj The object (controller exports)
+ * @return {object|Array|Function} The wrapped object
+ */
+function autoWrapExpress (obj) {
+  if (_.isArray(obj)) {
+    return obj.map(autoWrapExpress)
+  }
+  if (_.isFunction(obj)) {
+    if (obj.constructor.name === 'GeneratorFunction') {
+      return wrapExpress(obj)
+    }
+    return obj
+  }
+  _.each(obj, (value, key) => {
+    obj[key] = autoWrapExpress(value)
+  })
+  return obj
+}
+
 module.exports = {
   getKafkaOptions,
-  getMinDate
+  getMinDate,
+  wrapExpress,
+  autoWrapExpress
 }

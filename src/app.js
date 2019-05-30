@@ -20,10 +20,37 @@ const helper = require('./common/helper')
 const app = express()
 const server = http.Server(app)
 const io = require('socket.io')(server)
+const routes = require('./routes')
+const apiRouter = express.Router()
 
 app.set('port', config.PORT)
 app.use(express.static(path.join(__dirname, '../ui/dist')))
 app.use(cors())
+
+_.each(routes, (verbs, url) => {
+  _.each(verbs, (def, verb) => {
+    let actions = [
+      (req, res, next) => {
+        req.signature = `${def.controller}#${def.method}`
+        next()
+      }
+    ]
+    const method = require(`./controllers/${def.controller}`)[def.method]
+
+    if (!method) {
+      throw new Error(`${def.method} is undefined, fro controller ${def.controller}`)
+    }
+    if (def.middleware && def.middleware.length > 0) {
+      actions = actions.concat(def.middleware)
+    }
+
+    actions.push(method)
+    apiRouter[verb](`${config.API_VERSION}${url}`, helper.autoWrapExpress(actions))
+    logger.info(`API: ${verb.toLocaleUpperCase()} ${config.API_VERSION}${url}`)
+  })
+})
+
+app.use('/', apiRouter)
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../ui/dist/index.html'))
 })

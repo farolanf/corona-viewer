@@ -4,6 +4,8 @@
 export const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3000';
 export const GOOGLE_MAP_KEY = process.env.GOOGLE_MAP_KEY || 'AIzaSyCkA6FtiFlzkKGS5TpTcLSuaToH1xOa3uQ';
 
+export const API_VERSION = process.env.API_VERSION || '/api/v1';
+
 /*
  * App Constants and Working Parameters
  */
