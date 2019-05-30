@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import axios from 'axios';
-import humanNumber from 'human-number';
+import numeral from 'numeral';
 
 import { SERVER_URL, API_VERSION } from '../../config';
 import styles from './styles.scss';
 
-const formatNumber = num => humanNumber(num, n => Number.parseFloat(n).toFixed(2));
+const formatNumber = num => numeral(num).format('0.00a');
 
 const Stats = ({ userCount, challengeCount, prizes }) => (
   <div className={styles.Stats}>
