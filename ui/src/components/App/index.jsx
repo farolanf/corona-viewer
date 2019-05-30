@@ -148,7 +148,7 @@ class App extends React.Component {
     super(props);
     this.state = {
       isDragging: false,
-      sliderTimestamp: getMinDate(),
+      sliderTimestamp: moment().valueOf(),
       activeEvents: [], // active events shown
       clickedEvents: [], // events clicked by the user
       eventsByTime: {}, // all events received from the backend, map from timestamp to event
