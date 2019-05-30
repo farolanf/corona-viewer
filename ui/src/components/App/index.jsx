@@ -8,7 +8,6 @@ import Slider from 'components/Slider';
 import Sidebar from 'components/Sidebar';
 import {
   CLICK_EVENT_FADE_TIME,
-  SLIDER_EVENT_FADE_TIME,
   EXPIRED_EVENTS_CLEAN_INTERVAL,
   ALLOWED_EVENT_TOPICS,
   ALLOWED_EVENT_TYPES,
@@ -40,6 +39,35 @@ const getURLParams = () => {
   const entries = keys.map(key => ({ key, value: searchParams.getAll(key) }));
 
   return entries;
+};
+
+/**
+ * Get timestamp with zero seconds and milliseconds.
+ * @param {number} timestamp The timestamp
+ */
+const getMinuteTimestamp = (timestamp) => {
+  const m = moment(timestamp).toDate();
+  m.setSeconds(0);
+  m.setMilliseconds(0);
+  return m.getTime();
+};
+
+/**
+ * Exclude events newer than timestamp.
+ * @param {object} eventsByLoc Events grouped by location
+ * @param {number} timestamp Reference timestamp
+ */
+const filterEventsByLoc = (eventsByLoc, timestamp) => {
+  const minuteTimestamp = getMinuteTimestamp(timestamp);
+
+  const eventsByLocFiltered = _.mapValues(
+    eventsByLoc,
+    events => events.filter(evt => evt.timeKey <= minuteTimestamp),
+  );
+
+  const locs = _.keys(eventsByLocFiltered).filter(loc => eventsByLocFiltered[loc].length);
+
+  return _.pick(eventsByLoc, locs);
 };
 
 /**
@@ -120,13 +148,12 @@ class App extends React.Component {
     super(props);
     this.state = {
       isDragging: false,
-      playTimestamp: 0,
-      sliderTimestamp: 0,
+      sliderTimestamp: getMinDate(),
       activeEvents: [], // active events shown
       clickedEvents: [], // events clicked by the user
-      eventStep: 0, // for same time and location, multiple events may exist, show them in steps
       eventsByTime: {}, // all events received from the backend, map from timestamp to event
       eventsByLoc: {}, // all events received from the backend, map from location to event
+      eventsByLocFiltered: {}, // eventsByLoc filtered by slider timestamp
     };
     this.displayEventBox = this.displayEventBox.bind(this);
     this.play = this.play.bind(this);
@@ -164,7 +191,12 @@ class App extends React.Component {
 
       // handle new events
       this.setState((prevState) => {
-        const { eventsByTime, eventsByLoc, activeEvents } = prevState;
+        const {
+          eventsByTime,
+          eventsByLoc,
+          activeEvents,
+          sliderTimestamp,
+        } = prevState;
 
         _.each(events, (evt) => {
           eventsByTime[evt.timeKey] = eventsByTime[evt.timeKey] || [];
@@ -183,7 +215,14 @@ class App extends React.Component {
           }
         });
 
-        return { eventsByTime, eventsByLoc, activeEvents };
+        const eventsByLocFiltered = filterEventsByLoc(eventsByLoc, sliderTimestamp);
+
+        return {
+          eventsByTime,
+          eventsByLoc,
+          activeEvents,
+          eventsByLocFiltered,
+        };
       });
     });
     socket.on('error', (error) => {
@@ -255,108 +294,65 @@ class App extends React.Component {
     m.setMilliseconds(0);
     const ts = m.getTime();
 
-    this.setState({
-      isDragging: false, playTimestamp: ts, sliderTimestamp: ts, eventStep: 0,
-    });
+    this.setState({ isDragging: false, sliderTimestamp: ts });
   }
 
   /**
-   * On drag, show the events near to the timestamp.
+   * On drag, show the events at the timestamp.
    * @param {Number} timestamp the drag timestamp
    */
   onDrag(timestamp) {
-    const { eventsByTime } = this.state;
-
-    const timeKeys = _.keys(eventsByTime).sort();
-    let timeKey;
-    for (let i = timeKeys.length - 1; i >= 0; i -= 1) {
-      if (timeKeys[i] <= timestamp) {
-        timeKey = timeKeys[i];
-        break;
-      }
-    }
-
-    const newState = { playTimestamp: timestamp, sliderTimestamp: timestamp, eventStep: 0 };
-    if (timeKey) {
-      const groupedEvents = _.groupBy(eventsByTime[timeKey], 'location');
-      const locs = _.keys(groupedEvents);
-
-      const events = [];
-      _.each(locs, (loc) => {
-        events.push(groupedEvents[loc][groupedEvents[loc].length - 1]);
-      });
-      newState.activeEvents = events;
-    }
-    this.setState(newState);
+    this.setState({ sliderTimestamp: timestamp });
+    this.filterEvents(timestamp);
   }
 
   /**
    * Play with the slider bar.
    */
   play() {
-    const {
-      playTimestamp, sliderTimestamp, eventsByTime, isDragging,
-    } = this.state;
-    let { eventStep } = this.state;
+    const { sliderTimestamp, isDragging } = this.state;
+
+    this.playTimeout = setTimeout(this.play, 1000);
 
     if (isDragging) {
       // don't mess with dragging
-      this.playTimeout = setTimeout(this.play, 1000);
       return;
     }
 
-    // find the timeKey according to playTimestamp
+    // advance time
+    const m = moment(sliderTimestamp);
+    m.add(1, 'minute');
+
+    // don't play beyond current real time
+    const nextTimestamp = Math.min(m.valueOf(), moment().valueOf());
+
+    this.setState({ sliderTimestamp: nextTimestamp });
+    this.filterEvents(nextTimestamp);
+  }
+
+  /**
+   * Exclude events newer than timestamp, and show active events at timestamp.
+   * @param {number} timestamp The timestamp
+   */
+  filterEvents(timestamp) {
+    const { eventsByTime, eventsByLoc } = this.state;
+
+    const minuteTimestamp = getMinuteTimestamp(timestamp);
+
+    // find the timeKey according to minuteTimestamp
     const timeKeys = _.keys(eventsByTime).sort();
     let timeKey;
     for (let i = 0; i < timeKeys.length; i += 1) {
-      if (timeKeys[i] >= playTimestamp) {
+      if (+timeKeys[i] === minuteTimestamp) {
         timeKey = timeKeys[i];
         break;
       }
     }
 
-    if (!timeKey) {
-      if (timeKeys.length) {
-        // move the slider bar to end
-        this.setState({ sliderTimestamp: Date.now() });
-      }
-      // doesn't have events shown, loop by 1 second for next iteration
-      this.playTimeout = setTimeout(this.play, 1000);
-    } else {
-      // group the events at timeKey by location.
-      // note for same timeKey and same location, multiple events may exist,
-      // we need play them step by step (with timestamp not changing).
-      const groupedEvents = _.groupBy(eventsByTime[timeKey], 'location');
-      const locs = _.keys(groupedEvents);
-
-      let maxStep = 0;
-      const events = [];
-
-      _.each(locs, (loc) => {
-        const step = groupedEvents[loc].length - 1;
-        if (step > maxStep) {
-          maxStep = step;
-        }
-        events.push(groupedEvents[loc][Math.min(eventStep, step)]);
-      });
-
-      let nextTS = Number(timeKey);
-
-      eventStep += 1;
-      if (eventStep > maxStep) {
-        eventStep = 0;
-        nextTS += 1;
-      }
-
-      const newState = { activeEvents: events, playTimestamp: nextTS, eventStep };
-      if (playTimestamp === sliderTimestamp) {
-        newState.sliderTimestamp = nextTS;
-      }
-      this.setState(newState);
-
-      // Has events shown, timeout by configured fade time
-      this.playTimeout = setTimeout(this.play, SLIDER_EVENT_FADE_TIME);
-    }
+    this.setState({
+      activeEvents: timeKey ? eventsByTime[timeKey] : [],
+      eventsByLocFiltered: filterEventsByLoc(eventsByLoc, timestamp),
+    });
   }
 
   /**
@@ -364,15 +360,15 @@ class App extends React.Component {
    * @param {Object} eventLoc the event location user clicked
    */
   displayEventBox(eventLoc) {
-    const { eventsByLoc, playTimestamp } = this.state;
+    const { eventsByLoc, sliderTimestamp } = this.state;
     const events = eventsByLoc[eventLoc.location];
 
-    // find the event closet to playTimestamp
+    // find the event closet to sliderTimestamp
     let minDistance = Number.MAX_SAFE_INTEGER;
     let event;
 
     _.each(events, (evt) => {
-      const distance = Math.abs(evt.timestamp - playTimestamp);
+      const distance = Math.abs(evt.timestamp - sliderTimestamp);
       if (distance < minDistance) {
         minDistance = distance;
         event = evt;
@@ -400,11 +396,13 @@ class App extends React.Component {
    */
   render() {
     const {
-      activeEvents, clickedEvents, eventsByLoc, sliderTimestamp,
+      activeEvents, clickedEvents, eventsByLocFiltered, sliderTimestamp,
     } = this.state;
 
-    const eventLocs = _.map(_.keys(eventsByLoc),
+
+    const eventLocs = _.map(_.keys(eventsByLocFiltered),
       location => ({ ...countryData[location], location }));
+
     return (
       <div className={styles.App}>
         <Sidebar />
